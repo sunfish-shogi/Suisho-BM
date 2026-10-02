@@ -21,6 +21,18 @@
 - 置換表のエントリは 24 バイトです。置換は KomoringHeights と同様に探索量を基準にし、証明・反証は重く扱います。
 - 補助スレッドは子の順序と探索パラメータ（非王手コスト、遅延生成の推定値、ε、深さ係数）をスレッドごとに変えて、探索を多様にします。
 
+## 配布ファイル（Windows）
+
+[Releases](https://github.com/tayayan/Suisho-BM/releases) の zip に、CPU 別の実行ファイルが入っています。
+
+| ファイル | 対象 CPU |
+|---|---|
+| `Suisho-BM-AVX2.exe` | AVX2 と BMI2 に対応した CPU（Intel Haswell 以降、AMD Zen 3 以降） |
+| `Suisho-BM-ZEN2.exe` | AMD Zen / Zen+ / Zen 2（Ryzen 1000〜3000 番台など。BMI2 が遅い CPU） |
+| `Suisho-BM-SSE41.exe` | 上記が動かない古い CPU |
+
+どれも探索結果は同じで、違うのは速さだけです。
+
 ## ビルド
 
 Windows では [MSYS2](https://www.msys2.org/) の MinGW64 環境（g++）でビルドします。
@@ -39,7 +51,7 @@ cd source
 make -j8 TARGET_CPU=AVX2
 ```
 
-`TARGET_CPU` には `AVX2`、`ZEN2`、`ZEN3`、`AVX512`、`SSE42`、`SSE2` を指定できます。
+`TARGET_CPU` には `AVX2`、`ZEN2`、`ZEN3`、`AVX512`、`SSE42`、`SSE41`、`SSE2` を指定できます。
 実行ファイルはリポジトリ直下の `Suisho-BM.exe` です（Linux では `Suisho-BM`）。
 
 ## 使い方（USI）

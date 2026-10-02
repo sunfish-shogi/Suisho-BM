@@ -2,3 +2,4 @@ obj/
 *.exe
 Suisho-BM
 build.log
+release/

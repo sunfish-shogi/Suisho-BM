@@ -2,6 +2,7 @@
 #
 #   make                      # g++, TARGET_CPU=AVX2
 #   make TARGET_CPU=ZEN2      # AMD Zen 2 (BMI2 is slow there)
+#   make TARGET_CPU=SSE41     # older CPUs without AVX2
 #   make COMPILER=clang++
 #
 # On Windows build with MSYS2 MinGW64 (see ../build.ps1).
@@ -25,6 +26,8 @@ else ifeq ($(TARGET_CPU),AVX2)
 	CPPFLAGS += -DUSE_AVX2 -DUSE_BMI2 -mbmi -mbmi2 -mavx2 -march=corei7-avx
 else ifeq ($(TARGET_CPU),SSE42)
 	CPPFLAGS += -DUSE_SSE42 -msse4.2 -march=corei7
+else ifeq ($(TARGET_CPU),SSE41)
+	CPPFLAGS += -DUSE_SSE41 -msse4.1 -march=core2
 else ifeq ($(TARGET_CPU),SSE2)
 	CPPFLAGS += -DUSE_SSE2 -msse2 -march=core2
 endif
@@ -76,6 +79,7 @@ DEPENDS = $(OBJECTS:.o=.d)
 all: $(TARGET)
 
 $(TARGET): $(OBJECTS)
+	@[ -d $(dir $@) ] || mkdir -p $(dir $@)
 	$(COMPILER) -o $@ $^ $(LDFLAGS) $(CPPFLAGS)
 
 $(OBJDIR)/%.o: %.cpp

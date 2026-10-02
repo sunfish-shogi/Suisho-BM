@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Msys2Root = 'C:\Tools\msys2',
-    [ValidateSet('SSE2', 'SSE42', 'AVX2', 'AVX512', 'ZEN2', 'ZEN3')]
+    [ValidateSet('SSE2', 'SSE41', 'SSE42', 'AVX2', 'AVX512', 'ZEN2', 'ZEN3')]
     [string]$TargetCpu = 'AVX2',
     [ValidateRange(1, 256)]
     [int]$Jobs = [Environment]::ProcessorCount,
