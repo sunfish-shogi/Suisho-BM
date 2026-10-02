@@ -14,7 +14,11 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#if defined(__EMSCRIPTEN__)
+#include <emmintrin.h>  // _mm_pause / _mm_prefetch (Emscripten's SSE emulation)
+#else
 #include <x86intrin.h>
+#endif
 
 #include "../../bitboard.h"
 #include "../../mate/mate.h"

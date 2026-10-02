@@ -3,6 +3,9 @@
 #include "usi.h"
 #include "misc.h"
 
+#include <cerrno>
+#include <cstdlib>
+
 using std::string;
 
 // Option設定が格納されたglobal object。
@@ -30,8 +33,14 @@ namespace USI {
 	// optionのdefault値を設定する。
 	void init(OptionsMap& o)
 	{
+#if defined(__EMSCRIPTEN__)
+		// wasm 版 : 置換表のほかに補助メモリ(この値の 4 割程度まで)を使う。
+		// ブラウザで確保できるのは実質 2GB 程度なので、置換表は 512MB までとする。
+		constexpr int MaxHashMB = 512;
+#else
 		// Hash上限。32bitモードなら2GB、64bitモードなら33TB
 		constexpr int MaxHashMB = Is64Bit ? 33554432 : 2048;
+#endif
 
 		// 並列探索するときのスレッド数
 		// CPUの搭載コア数をデフォルトとすべきかも知れないが余計なお世話のような気もするのでしていない。
@@ -45,7 +54,10 @@ namespace USI {
 		// そもそもで言うとsetoptionに対してそんなに時間のかかることをするとGUI側がtimeoutになる懸念もある。
 		// Stockfishもこうすべきだと思う。
 
-#if defined(USER_ENGINE)
+#if defined(USER_ENGINE) && defined(__EMSCRIPTEN__)
+		// wasm 版 : スレッドは起動時に確保する pthread のプールから取るので、上限は Makefile と合わせる。
+		o["Threads"] << Option(1, 1, WASM_MAX_THREADS, [](const Option& o) { /* Threads.set(o); */ });
+#elif defined(USER_ENGINE)
 		o["Threads"] << Option(1, 1, 512, [](const Option& o) { /* Threads.set(o); */ });
 #else
 		o["Threads"] << Option(4, 1, 512, [](const Option& o) { /* Threads.set(o); */ });
@@ -127,7 +139,11 @@ namespace USI {
 		// TANUKI_MATE_ENGINEのとき
 #if defined(USER_ENGINE)
 		// 必至探索の既定値 [MB]。高難度問題では GUI から増量できる。
+#if defined(__EMSCRIPTEN__)
+		o["USI_Hash"] << Option(128, 1, MaxHashMB);
+#else
 		o["USI_Hash"] << Option(1024, 1, MaxHashMB);
+#endif
 #else
 		o["USI_Hash"] << Option(4096, 1, MaxHashMB);
 #endif
@@ -292,9 +308,17 @@ namespace USI {
 
 		// 範囲外なら設定せずに返る。
 		// "EvalDir"などでstringの場合は空の文字列を設定したいことがあるので"string"に対して空の文字チェックは行わない。
+		// 数値でない spin の値も無視する。(stoll()は例外を投げるが、例外を無効にしたビルド、
+		// 特に wasm 版では abort になるため、strtoll()で調べる。)
+		auto spin_ok = [&]() {
+			char* end = nullptr;
+			errno = 0;
+			const long long n = strtoll(v.c_str(), &end, 10);
+			return end != v.c_str() && *end == '\0' && errno == 0 && min <= n && n <= max;
+		};
 		if (  ((type != "button" && type != "string") && v.empty())
 			|| (type == "check" && v != "true" && v != "false")
-			|| (type == "spin" && (stoll(v) < min || stoll(v) > max)))
+			|| (type == "spin" && !spin_ok()))
 			return *this;
 
 		// ボタン型は値を設定するものではなく、単なるトリガーボタン。

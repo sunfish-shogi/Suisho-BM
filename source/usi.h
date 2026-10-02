@@ -104,6 +104,12 @@ namespace USI
 	// USIメッセージ応答部(起動時に、各種初期化のあとに呼び出される)
 	void loop(int argc, char* argv[]);
 
+#if defined(__EMSCRIPTEN__)
+	// wasm 版 : JavaScript 側から渡された USI コマンドを 1 行積む。
+	// loop()は標準入力の代わりに、ここで積まれたコマンドを順に取り出す。
+	void push_command(const std::string& cmd);
+#endif
+
 #if defined(USE_PIECE_VALUE)
 	// USIプロトコルの形式でValue型を出力する。
 	// 歩が100になるように正規化するので、operator <<(Value)をこういう仕様にすると

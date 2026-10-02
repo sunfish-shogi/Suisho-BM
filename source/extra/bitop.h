@@ -113,7 +113,13 @@ inline uint64_t PEXT64(uint64_t a, uint64_t b) { return pext(a, b); }
 //     POPCNT(SSE4.2の命令)
 // ----------------------------
 
-#if defined (USE_SSE42)
+#if defined (__EMSCRIPTEN__)
+
+// wasm : Emscripten の SSE4.2 ヘッダーには popcnt が無いので、wasm の popcnt 命令になる builtin を使う。
+#define POPCNT32(a) __builtin_popcount((u32)(a))
+#define POPCNT64(a) __builtin_popcountll((u64)(a))
+
+#elif defined (USE_SSE42)
 
 #if defined (IS_64BIT)
 #define POPCNT32(a) _mm_popcnt_u32(a)
@@ -171,7 +177,7 @@ FORCE_INLINE int MSB32(uint32_t v) { ASSERT_LV3(v != 0); unsigned long index; _B
 FORCE_INLINE int MSB64(uint64_t v) { ASSERT_LV3(v != 0); return uint32_t(v >> 32) ? 32 + MSB32(uint32_t(v >> 32)) : MSB32(uint32_t(v)); }
 #endif
 
-#elif defined(__GNUC__) && ( defined(__i386__) || defined(__x86_64__) || defined(__ANDROID__) || defined(__ARM_ARCH) )
+#elif defined(__GNUC__) && ( defined(__i386__) || defined(__x86_64__) || defined(__ANDROID__) || defined(__ARM_ARCH) || defined(__EMSCRIPTEN__) )
 
 FORCE_INLINE int LSB32(const u32 v) { ASSERT_LV3(v != 0); return __builtin_ctzll(v); }
 FORCE_INLINE int LSB64(const u64 v) { ASSERT_LV3(v != 0); return __builtin_ctzll(v); }

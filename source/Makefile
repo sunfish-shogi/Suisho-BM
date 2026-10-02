@@ -4,6 +4,7 @@
 #   make TARGET_CPU=ZEN2      # AMD Zen 2 (BMI2 is slow there)
 #   make TARGET_CPU=SSE41     # older CPUs without AVX2
 #   make COMPILER=clang++
+#   make TARGET_CPU=WASM      # WebAssembly for ShogiHome with em++ (see ../script/wasm_build.sh)
 #
 # On Windows build with MSYS2 MinGW64 (see ../build.ps1).
 
@@ -11,6 +12,12 @@ TARGET_CPU = AVX2
 COMPILER   = g++
 OBJDIR     = ../obj
 TARGETDIR  = ..
+
+ifeq ($(TARGET_CPU),WASM)
+	COMPILER  = em++
+	OBJDIR    = ../build/wasm/obj
+	TARGETDIR = ../build/wasm
+endif
 
 CPPFLAGS = -std=c++17 -fno-exceptions -fno-rtti -Wextra -Ofast -MMD -MP -fpermissive \
            -DNDEBUG -DUNICODE -DNO_EXCEPTIONS -DUSER_ENGINE -DTARGET_CPU=\"$(TARGET_CPU)\"
@@ -30,6 +37,9 @@ else ifeq ($(TARGET_CPU),SSE41)
 	CPPFLAGS += -DUSE_SSE41 -msse4.1 -march=core2
 else ifeq ($(TARGET_CPU),SSE2)
 	CPPFLAGS += -DUSE_SSE2 -msse2 -march=core2
+else ifeq ($(TARGET_CPU),WASM)
+	# Emscripten maps the SSE4.2 intrinsics onto wasm SIMD128 (as YaneuraOu does).
+	CPPFLAGS += -DUSE_SSE42 -msse4.2 -msimd128
 endif
 
 ifneq (,$(findstring g++,$(COMPILER)))
@@ -39,7 +49,26 @@ endif
 # Windows: cmd/PowerShell set OS=Windows_NT; an MSYS2 login shell does not,
 # so check uname too. Link statically so that no MinGW DLLs are needed.
 UNAME := $(shell uname -s 2>/dev/null)
-ifneq (,$(filter Windows_NT,$(OS))$(findstring MINGW,$(UNAME))$(findstring MSYS,$(UNAME)))
+ifeq ($(TARGET_CPU),WASM)
+	# WebAssembly module following ShogiHome's wasm engine ABI
+	# (shogihome-wasm-engine/1, specs/wasm-engine-abi.md in ShogiHome).
+	# Search threads run as pthreads, so the page must be cross-origin isolated.
+	# WASM_MAX_THREADS is the upper bound of the Threads option. The pthread pool holds
+	# the USI loop, the Threads pool and the solver's per-search helpers/workers.
+	WASM_MAX_THREADS = 4
+	WASM_POOL_SIZE   = 10
+	CPPFLAGS := $(subst -Ofast,-O3,$(CPPFLAGS)) -Wno-unused-parameter -D_LINUX -pthread -DWASM_MAX_THREADS=$(WASM_MAX_THREADS)
+	LDFLAGS  = -pthread -flto --no-entry \
+	           -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createSuishoBM \
+	           -sENVIRONMENT=worker,node -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 \
+	           -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=67108864 -sMAXIMUM_MEMORY=2147483648 \
+	           -sSTACK_SIZE=4194304 \
+	           -sPTHREAD_POOL_SIZE=$(WASM_POOL_SIZE) \
+	           -sEXPORTED_FUNCTIONS=_usi_command,_malloc,_free \
+	           -sEXPORTED_RUNTIME_METHODS=ccall,cwrap \
+	           --pre-js wasm/shim.js
+	TARGET = $(TARGETDIR)/suisho-bm.js
+else ifneq (,$(filter Windows_NT,$(OS))$(findstring MINGW,$(UNAME))$(findstring MSYS,$(UNAME)))
 	LDFLAGS += -static -Wl,--stack,25000000
 	TARGET = $(TARGETDIR)/Suisho-BM.exe
 else
@@ -81,9 +110,9 @@ DEPENDS = $(OBJECTS:.o=.d)
 
 all: $(TARGET)
 
-$(TARGET): $(OBJECTS)
+$(TARGET): $(OBJECTS) $(filter wasm/shim.js,$(LDFLAGS))
 	@[ -d $(dir $@) ] || mkdir -p $(dir $@)
-	$(COMPILER) -o $@ $^ $(LDFLAGS) $(CPPFLAGS)
+	$(COMPILER) -o $@ $(OBJECTS) $(LDFLAGS) $(CPPFLAGS)
 
 $(OBJDIR)/%.o: %.cpp
 	@[ -d $(dir $@) ] || mkdir -p $(dir $@)
