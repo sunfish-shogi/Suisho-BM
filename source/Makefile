@@ -36,7 +36,10 @@ ifneq (,$(findstring g++,$(COMPILER)))
 	CPPFLAGS += -fno-asynchronous-unwind-tables
 endif
 
-ifeq ($(OS),Windows_NT)
+# Windows: cmd/PowerShell set OS=Windows_NT; an MSYS2 login shell does not,
+# so check uname too. Link statically so that no MinGW DLLs are needed.
+UNAME := $(shell uname -s 2>/dev/null)
+ifneq (,$(filter Windows_NT,$(OS))$(findstring MINGW,$(UNAME))$(findstring MSYS,$(UNAME)))
 	LDFLAGS += -static -Wl,--stack,25000000
 	TARGET = $(TARGETDIR)/Suisho-BM.exe
 else
