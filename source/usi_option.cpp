@@ -126,8 +126,8 @@ namespace USI {
 
 		// TANUKI_MATE_ENGINEのとき
 #if defined(USER_ENGINE)
-		// 必至探索の既定値。高難度問題では GUI から増量できる。
-		o["USI_Hash"] << Option(256, 1, MaxHashMB);
+		// 必至探索の既定値 [MB]。高難度問題では GUI から増量できる。
+		o["USI_Hash"] << Option(1024, 1, MaxHashMB);
 #else
 		o["USI_Hash"] << Option(4096, 1, MaxHashMB);
 #endif
