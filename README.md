@@ -54,6 +54,27 @@ make -j8 TARGET_CPU=AVX2
 `TARGET_CPU` には `AVX2`、`ZEN2`、`ZEN3`、`AVX512`、`SSE42`、`SSE41`、`SSE2` を指定できます。
 実行ファイルはリポジトリ直下の `Suisho-BM.exe` です（Linux では `Suisho-BM`）。
 
+### WebAssembly 版（ShogiHome）
+
+[ShogiHome](https://github.com/sunfish-shogi/shogihome) の Web 版に載せる WebAssembly 版を、
+ShogiHome の wasm エンジン ABI（`shogihome-wasm-engine/1`）に従ってビルドできます。
+やねうら王と同じく Emscripten の Docker イメージ（`emscripten/emsdk:6.0.6`）でビルドするので、Docker が必要です。
+
+```bash
+script/wasm_build.sh            # Linux / macOS（rebuild を付けると全オブジェクトを作り直す）
+```
+
+```powershell
+.\script\wasm_build.ps1         # Windows（Docker Desktop）。-Rebuild で全オブジェクトを作り直す
+```
+
+`build/wasm/suisho-bm/` に `engine.json`・`suisho-bm.js`・`suisho-bm.wasm`・`LICENSE.txt` ができます。
+このディレクトリを ShogiHome の `public/engines/` に置いてください（`engine.json` の名前・作者・オプションは、ビルドしたエンジンの `usi` の応答から作ります）。
+
+- 探索スレッドは pthread で動くので、cross-origin isolated なページが必要です（`requiresCrossOriginIsolation: true`）。
+- `Threads` は 1〜4、`USI_Hash` は既定 128MB・最大 512MB です（ブラウザで確保できるメモリに合わせています）。
+- USI コマンドは専用のスレッドで処理するので、探索中も `stop` がすぐに効きます。
+
 ## 使い方（USI）
 
 USI プロトコルで動きます。ShogiGUI などの GUI にエンジンとして登録し、詰将棋（詰み探索）の機能で問題局面を解かせてください。
@@ -115,6 +136,7 @@ checkmate S*2c 2b1c 2c3d+
 | `source/engine/user-engine/user-search.cpp` | USI との接続 |
 | `source/` のその他 | やねうら王から必要な部分だけを抜き出したもの（盤面・指し手生成・1 手詰め・USI など） |
 | `build.ps1` / `source/Makefile` | ビルド |
+| `script/wasm_build.{sh,ps1}` / `source/wasm/shim.js` | WebAssembly 版（ShogiHome）のビルド |
 
 ## クレジット・ライセンス
 

@@ -7,11 +7,18 @@
 #include "usi.h"
 #include "misc.h"
 
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#include <thread>
+#endif
+
 // ----------------------------------------
 //  main()
 // ----------------------------------------
 
-int main(int argc, char* argv[])
+namespace {
+
+int engine_main(int argc, char* argv[])
 {
 	// --- 全体的な初期化
 
@@ -38,3 +45,43 @@ int main(int argc, char* argv[])
 
 	return 0;
 }
+
+} // namespace
+
+#if !defined(__EMSCRIPTEN__)
+
+int main(int argc, char* argv[])
+{
+	return engine_main(argc, argv);
+}
+
+#else
+
+// ----------------------------------------
+//  wasm 版 (ShogiHome の wasm エンジン ABI : shogihome-wasm-engine/1)
+// ----------------------------------------
+
+// JavaScript 側(wasm/shim.js)から USI コマンドを 1 行ずつ受け取る。
+//
+// コマンドは JavaScript のスレッドでは処理せず、専用の pthread で動く USI::loop()に渡す。
+// JavaScript のスレッドを塞がないので、探索中も "stop" が届き、
+// 探索スレッドの出力(Emscripten がこのスレッドへ代理で書き出す)も滞らない。
+// main()は使わない(-sINVOKE_RUN=0)。初期化は最初のコマンドが届いたときに行う。
+extern "C" EMSCRIPTEN_KEEPALIVE void usi_command(const char* line)
+{
+	static bool started = false;
+
+	USI::push_command(line ? line : "");
+
+	if (!started)
+	{
+		started = true;
+		std::thread([] {
+			static char argv0[] = "suisho-bm";
+			char* argv[] = { argv0, nullptr };
+			engine_main(1, argv);
+		}).detach();
+	}
+}
+
+#endif

@@ -8,6 +8,11 @@
 #include <sstream>
 #include <queue>
 
+#if defined(__EMSCRIPTEN__)
+#include <condition_variable>
+#include <mutex>
+#endif
+
 using namespace std;
 
 // ----------------------------------
@@ -300,6 +305,8 @@ u64 eval_sum;
 // 局面は初期化されないので注意。
 void is_ready(bool skipCorruptCheck)
 {
+#if !defined(__EMSCRIPTEN__)
+	// wasm 版では改行を送らない。(ShogiHome には不要で、スレッドも一つ節約できる。)
 
 	// --- Keep Alive的な処理 ---
 
@@ -348,6 +355,7 @@ void is_ready(bool skipCorruptCheck)
 		Tools::sleep(100);
 
 	// --- Keep Alive的な処理ここまで ---
+#endif
 
 	// スレッドを先に生成しないとUSI_Hashで確保したメモリクリアの並列化が行われなくて困る。
 
@@ -753,6 +761,35 @@ void search_cmd(Position& pos, istringstream& is)
 // 　　USI応答部
 // --------------------
 
+#if defined(__EMSCRIPTEN__)
+// wasm 版 : 標準入力の代わりのコマンドキュー
+namespace {
+	std::mutex              wasm_cmd_mutex;
+	std::condition_variable wasm_cmd_cv;
+	std::queue<std::string> wasm_cmds;
+
+	// 次のコマンドが積まれるまで待つ。
+	// loop()はJavaScriptのスレッドではなく専用の pthread で動くので、ここで待ってよい。
+	std::string wasm_pop_command()
+	{
+		std::unique_lock<std::mutex> lk(wasm_cmd_mutex);
+		wasm_cmd_cv.wait(lk, [] { return !wasm_cmds.empty(); });
+		std::string cmd = std::move(wasm_cmds.front());
+		wasm_cmds.pop();
+		return cmd;
+	}
+}
+
+void USI::push_command(const std::string& cmd)
+{
+	{
+		std::lock_guard<std::mutex> lk(wasm_cmd_mutex);
+		wasm_cmds.push(cmd);
+	}
+	wasm_cmd_cv.notify_one();
+}
+#endif
+
 // USI応答部本体
 void USI::loop(int argc, char* argv[])
 {
@@ -808,8 +845,12 @@ void USI::loop(int argc, char* argv[])
 	{
 		if (cmds.size() == 0)
 		{
+#if defined(__EMSCRIPTEN__)
+			cmd = wasm_pop_command();
+#else
 			if (!std::getline(cin, cmd)) // 入力が来るかEOFがくるまでここで待機する。
 				cmd = "quit";
+#endif
 		} else {
 			// 積んであるコマンドがあるならそれを実行する。
 			// 尽きれば"quit"だと解釈してdoループを抜ける仕様にすることはできるが、
