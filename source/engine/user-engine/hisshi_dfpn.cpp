@@ -2073,6 +2073,7 @@ struct PvBuilder {
 
 
   AnswerPool* pool = nullptr;  // worker threads for the shorter-answer attempts (several search threads)
+  AtomicHandSet* verified = nullptr;  // positions checked by the proof verification (reused by VerifyLine)
   std::unordered_map<Key, bool> mated_memo;
   std::unordered_set<Key> not_known_mated;  // neither in the TT nor a one-ply mate
   std::uint64_t probe_calls = 0, probe_nodes = 0, probe_mated = 0, reprove_calls = 0, reprove_nodes = 0;
@@ -2383,13 +2384,15 @@ struct PvBuilder {
   // so the shortest answer among proven moves can be longer than the true
   // shortest (e.g. a check proven first, a one-move hisshi never tried).
   // After building the answer, the unproven attacks along it are tried with
-  // a small budget (from the root); when one is proven the exact length
-  // search is repeated.
-  static constexpr int kShortenRounds = 3;
+  // a small budget, from the end of the line back to the root (near hisshi a
+  // shorter answer is both likelier and cheaper to prove); when one is proven
+  // the exact length search is repeated, while the budget lasts.
+  static constexpr int kShortenRounds = 16;
   static constexpr std::uint64_t kShortenBudget = 1500000;  // nodes for all attempts of one answer
   static constexpr std::uint64_t kShortenChild = 10000;     // one attack
   static constexpr std::uint64_t kShortenThreat = 2000;     // "is it a tsumero?" pre-check
   std::uint64_t shorten_nodes = 0, shorten_found = 0;
+  std::unordered_set<Key> shorten_tried;  // (position, attack) already tried in an earlier round
 
   std::vector<Move> Pv(SearchImpl& h) {
     std::vector<Move> pv, first;
@@ -2400,10 +2403,11 @@ struct PvBuilder {
       if (round == 0) { first = pv; first_exact = exact; }
       if (!exact || total <= 1 || round == kShortenRounds || shorten_nodes >= kShortenBudget) break;
       if (!TryShorterAlong(h, pv, total)) break;
-      // New proofs: lengths change.
-      bounds.clear();
+      // New proofs can only shorten lengths: "within k" stays true, "not
+      // within k" may not. Mate probes are facts (a failed probe stays a
+      // conservative "not known").
+      for (auto& [key, b] : bounds) b.lo = -1;
       proven_cache.clear();
-      mated_memo.clear();
       visits = 0;
     }
     if (pv != first && !VerifyLine(h, pv)) {
@@ -2418,41 +2422,50 @@ struct PvBuilder {
   // Independent check of the answer's attacks: the position after each
   // attacker move of `pv` is a verified hisshi (the root proof itself was
   // verified before the answer was built).
+  // One verifier for the whole line, the position nearest to hisshi first
+  // (the earlier positions' proofs contain the later ones), which also reuses
+  // the positions checked by the proof verification.
   bool VerifyLine(SearchImpl& h, const std::vector<Move>& pv) {
+    if (pv.empty()) return true;
     Position& p = h.pos;
     std::vector<StateInfo> st(pv.size() + 1);
-    bool ok = true;
-    std::size_t ply = 0;
-    for (; ply < pv.size() && ok; ++ply) {
-      const bool attacker = p.side_to_move() == atk;
-      p.do_move(pv[ply], st[ply]);
-      if (attacker) {
-        Verifier v(h);
-        h.PushPath(p.key());
-        ok = v.Verify(0, kModeHisshi);
-        h.PopPath();
-      }
+    Verifier v(h);
+    v.own_log2 = 24;
+    v.shared = verified;  // nullptr: own set
+    // Attacker moves are pv[0], pv[2], ...: positions after an odd number of moves.
+    for (std::size_t end = pv.size() % 2 ? pv.size() : pv.size() - 1;; end -= 2) {
+      for (std::size_t i = 0; i < end; ++i) p.do_move(pv[i], st[i]);
+      v.on_path.clear();
+      v.raw_path.clear();
+      v.error.clear();
+      h.PushPath(p.key());
+      const bool ok = v.Verify(0, kModeHisshi);
+      h.PopPath();
+      for (std::size_t i = end; i > 0; --i) p.undo_move(pv[i - 1]);
+      if (!ok) return false;
+      if (end < 2) break;
     }
-    while (ply > 0) p.undo_move(pv[--ply]);
-    return ok;
+    return true;
   }
 
   // Tries to prove the unproven attacks at the attacker nodes of `pv`
-  // (where a shorter answer is possible). True when one was proven.
+  // (where a shorter answer is possible), the node nearest to hisshi first.
+  // True when one was proven.
   bool TryShorterAlong(SearchImpl& h, const std::vector<Move>& pv, int total) {
     Position& p = h.pos;
     std::vector<StateInfo> st(pv.size() + 1);
-    bool found = false;
-    std::size_t ply = 0;
-    for (; ply < pv.size(); ++ply) {
-      const int left = total - static_cast<int>(ply);  // plies until hisshi from here
-      if (p.side_to_move() == atk && left >= 3 && shorten_nodes < kShortenBudget)
-        found |= TryShorterHere(h);
-      if (found) break;  // rebuild from the improved answer first
-      p.do_move(pv[ply], st[ply]);
+    // Attacker nodes with at least 3 plies left (a shorter answer needs 2 fewer).
+    std::vector<std::size_t> nodes;
+    for (std::size_t ply = 0; ply < pv.size(); ply += 2)
+      if (total - static_cast<int>(ply) >= 3) nodes.push_back(ply);
+    for (auto it = nodes.rbegin(); it != nodes.rend() && shorten_nodes < kShortenBudget; ++it) {
+      const std::size_t ply = *it;
+      for (std::size_t i = 0; i < ply; ++i) p.do_move(pv[i], st[i]);
+      const bool found = TryShorterHere(h);
+      for (std::size_t i = ply; i > 0; --i) p.undo_move(pv[i - 1]);
+      if (found) return true;  // rebuild from the improved answer first
     }
-    while (ply > 0) p.undo_move(pv[--ply]);
-    return found;
+    return false;
   }
 
   bool TryShorterHere(SearchImpl& h) {
@@ -2466,6 +2479,7 @@ struct PvBuilder {
         Child c{};
         c.move = m;
         if (h.ProbeChild(c, kModeHisshi).pn == 0) continue;  // already proven
+        if (!shorten_tried.insert(Mix(p.key(), m)).second) continue;
         tasks.push_back(AnswerPool::Task{sfen, m, kShortenChild, kShortenThreat});
       }
       pool->Run(tasks);
@@ -2485,6 +2499,7 @@ struct PvBuilder {
       Child c{};
       c.move = m;
       if (h.ProbeChild(c, kModeHisshi).pn == 0) continue;  // already proven
+      if (!shorten_tried.insert(Mix(p.key(), m)).second) continue;
       const bool check = p.gives_check(m);
       p.do_move(m, s1);
       const std::uint64_t n0 = h.nodes;
@@ -2733,10 +2748,12 @@ Result Solver::Solve(Position& root, const Limits& limits, const Options& opt,
   // The displayed answer (futile interpositions excluded), built after the
   // verification.
   std::string answer_info;
+  std::unique_ptr<AtomicHandSet> verified_set;  // positions checked by the verification below
   auto build_answer = [&]() {
     const auto t0 = s.ElapsedMs();
     const std::uint64_t n0 = s.nodes;
     PvBuilder builder{*this, opt, s.atk};
+    builder.verified = verified_set.get();
     std::unique_ptr<AnswerPool> pool;
     if (nthreads > 1) {
       pool = std::make_unique<AnswerPool>(*this, root_sfen, root.this_thread(), opt, limits, should_stop, nthreads, s.atk);
@@ -2846,8 +2863,8 @@ Result Solver::Solve(Position& root, const Limits& limits, const Options& opt,
       ok = true;
     } else {
       Verifier v(s);
-      v.shared = shared_done.get();  // nullptr: own set
-      v.own_log2 = std::min(v.own_log2, memo_log2);
+      if (!shared_done) shared_done = std::make_unique<AtomicHandSet>(std::min(v.own_log2, memo_log2));
+      v.shared = shared_done.get();
       s.PushPath(root.key());
       ok = v.Verify(0, kModeHisshi);
       s.PopPath();
@@ -2856,6 +2873,7 @@ Result Solver::Solve(Position& root, const Limits& limits, const Options& opt,
     }
     res.verified = ok;
     res.verify_nodes = visited;
+    if (ok) verified_set = std::move(shared_done);  // kept for checking the answer's line
     std::ostringstream os;
     os << "visited=" << visited << " research_nodes=" << (s.nodes - before)
        << " time_ms=" << (s.ElapsedMs() - t0) << (parallel_ok ? " parallel" : "");
